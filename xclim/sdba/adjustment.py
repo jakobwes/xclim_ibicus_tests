@@ -307,6 +307,63 @@ class Adjust(BaseAdjustment):
         return scen
 
 
+# Two changes to Adjust: class-name and adjust takes self and passes it down to _adjust + cls = self.__class__
+class ibicusAdjust(BaseAdjustment):
+    """Adjustment with no intermediate trained object.
+
+    Children classes should implement a `_adjust` classmethod taking as input the three DataArrays
+    and returning the scen dataset/array.
+    """
+
+    def adjust(
+        self,
+        ref: xr.DataArray,
+        hist: xr.DataArray,
+        sim: xr.DataArray,
+        **kwargs,
+    ):
+        r"""Return bias-adjusted data. Refer to the class documentation for the algorithm details.
+
+        Parameters
+        ----------
+        ref : DataArray
+            Training target, usually a reference time series drawn from observations.
+        hist : DataArray
+            Training data, usually a model output whose biases are to be adjusted.
+        sim : DataArray
+            Time series to be bias-adjusted, usually a model output.
+        \*\*kwargs
+            Algorithm-specific keyword arguments, see class doc.
+        """
+        cls = self.__class__
+
+        kwargs = parse_group(cls._adjust, kwargs)
+        skip_checks = kwargs.pop("skip_input_checks", False)
+
+        if not skip_checks:
+            if "group" in kwargs:
+                self._check_inputs(ref, hist, sim, group=kwargs["group"])
+
+            (ref, hist, sim), _ = cls._harmonize_units(ref, hist, sim)
+
+        out = self._adjust(ref, hist, sim, **kwargs)
+
+        if isinstance(out, xr.DataArray):
+            out = out.rename("scen").to_dataset()
+
+        scen = out.scen
+
+        params = ", ".join([f"{k}={repr(v)}" for k, v in kwargs.items()])
+        infostr = f"{cls.__name__}.adjust(ref, hist, sim, {params})"
+        scen.attrs["history"] = update_history(f"Bias-adjusted with {infostr}", sim)
+        scen.attrs["bias_adjustment"] = infostr
+        scen.attrs["units"] = ref.units
+
+        if OPTIONS[SDBA_EXTRA_OUTPUT]:
+            return out
+        return scen
+
+
 class EmpiricalQuantileMapping(TrainAdjust):
     """Empirical Quantile Mapping bias-adjustment.
 
